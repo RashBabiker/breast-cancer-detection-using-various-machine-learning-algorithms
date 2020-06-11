@@ -1,0 +1,360 @@
+---
+title: "PEC3"
+author: "Rashid Babiker Sánchez"
+date: '`r format(Sys.Date(),"%e de %B, %Y")`'
+output:
+  pdf_document:
+    toc: yes
+    toc_depth: 2
+params:
+  datos: "BreastCancer1.csv"
+  ntuning: 10
+---
+
+# Repositorio Github [COMPLETA]
+
+Se han probado los algoritmos en distintas condiciones que no se muestran en el informe por agilizar la lectura y la reproducción del código. A lo largo del informe se hace referencia a estos resultados para justificar las decisiones tomadas, se pueden consultar en el siguiente repositorio de github: [METER ENLACE].
+
+# Librerías usadas
+
+```{r results=F, message=F}
+knitr::opts_chunk$set(cache = TRUE)
+options(scipen=999)
+library(tidyverse); library(caret); library(ggfortify); library(doParallel); library(beepr);
+library(vegan); library(party); library(knitr)
+```
+
+\newpage
+
+# Análisis descriptivo de los datos y control de calidad
+
+```{r}
+data <- read.csv(params$datos)
+data$id <- NULL # no es una información que necesite
+```
+
+Los datos están completos, no falta información de ninguna variable, pero están desapareados, hay más diagnósticos benignos que malignos.
+
+```{r}
+sum(is.na(data))
+kable(table(data$diagnosis))
+```
+
+La siguiente tabla muestra el rango de valores de cada variable, así como su media y su mediana:
+
+```{r}
+m4 <- sapply(data[,1:30], function (x){c(min(x), max(x), mean(x), median(x))}) %>% 
+  t() %>% as.data.frame()
+colnames(m4) <- c("minimo", "maximo", "media", "mediana")
+kable(round(m4,3))
+```
+
+La media y la mediana coinciden en la mayoría de las variables, lo que sugiere que siguen una distribución normal y que no tienen outliers, a excepción de las dos variables con mayor varianza y media:
+
+```{r}
+par(mfrow=c(1,2))
+plot(m4$minimo, m4$maximo)
+plot(m4$media, m4$mediana)
+abline(a=0,b=1)
+```
+
+\newpage 
+
+Las variables con mayor media y mediana son `r as.name(rownames(m4 %>% arrange(-media))[1])` y `r as.name(rownames(m4 %>% arrange(-media))[2])`, podrían contener outliers, a continuación se representa su distribución para localizarlos, los círculos muestran valores que superan 3 veces el rango intercuartílico:
+
+```{r}
+par(mfrow=c(1,2))
+boxplot(data$area_worst, range = 3, main = "Area_worst") 
+boxplot(data$area_mean, range = 3, main = "Area_mean")
+```
+
+Estos valores pueden distorsionar los análisis posteriores, o pueden ser claros indicadores de cáncer.
+
+```{r}
+#preparo los rangos intercuartílicos:
+IQR_worst <- as.numeric(quantile(data$area_worst, 0.75)-quantile(data$area_worst, 0.25))
+IQR_mean <- as.numeric(quantile(data$area_mean, 0.75)-quantile(data$area_mean, 0.25))
+# datos sin los outliers
+data_fil <- data %>% filter(area_mean<3*IQR_mean & area_worst<3*IQR_worst)
+# outliers
+outliers <- data %>% filter(area_mean>3*IQR_mean & area_worst>3*IQR_worst)
+kable(table(outliers$diagnosis))
+```
+
+La tabla sin outliers se queda con `r nrow(data_fil)` muestras de las `r nrow(data)` totales. Todos los outliers corresponden a tumores malignos, es decir, un área excesivamente grande es indicador de cáncer. Se han probado todos los algoritmos sin estos outliers y en general la precisión disminuye, por lo que se mantienen todos los datos. Los datos in outliers están en el repositorio de github: [ENLACE].
+
+<!-- Hasta aqui revisado hasta ortografía, faltan los enlaces a github -->
+
+## Normalización
+
+Los datos tienen distintos rangos, como en principio no hay un parámetro más importante que otro, puede ser recomendable normalizar los datos para usarlos con ciertos algoritmos. La normalización solo ha mostrado ser eficaz con el algoritmo knn, por lo que solo se usa con ese método. Los resultados usando datos normalizados están en github [ENLACE].
+
+## Comparación entre tumores
+
+Para que se puedan clasificar correctamente, las muestras deben ser diferentes, esto se confirma mediante PCA y PERMANOVA. El PCA muestra claras diferencias entre los grupos en general, aunque hay ciertos puntos donde las diferencias no están claras. El PERMANOVA muestra diferencias significativas entre los dos diagnósticos.
+
+```{r}
+PCA <- prcomp(data[,1:30], center = F,scale. = F)
+
+autoplot(PCA, data = data, colour = "diagnosis")
+permanova <- adonis(data[,1:30]~data$diagnosis, permutations = 10000, method = "euclidean")
+# p-valor, probabilidad de que siendo iguales B y M se viera esta distribución
+permanova$aov.tab$`Pr(>F)`[1] 
+```
+
+# Selección de las muestras
+
+Se usa el método holdout para que, una vez elegidos los mejores parámetros de cada algoritmo, se pruebe la eficacia con datos que no ha visto nunca.
+
+```{r}
+set.seed(12345)
+
+trainIndex <- createDataPartition(data$diagnosis, p = 2/3, 
+                                  list = FALSE, 
+                                  times = 1)
+train <- data[trainIndex,]
+test <- data[-trainIndex,]
+
+c(nrow(train), nrow(test))
+```
+
+# Clasificación
+
+Para entrenar y optimizar los mejores parámetros se usará el 10-fold-cross-validation. 
+
+Como los falsos negativos son mucho más peligrosos que los falsos positivos, se ha probado a entrenar y elegir los modelos con mayor sensibilidad en el cross validation, los resultados están en la carpeta resultados del repositorio de github [ENLACE]. Sorprendentemente al enfrentar estos modelos al test dataset, que no habían visto, no se ve una mejora respecto a los modelos entrenados basados en la precisión, incluso el modelo de neural network empeora todo lo posible, valorando todos los tumores como benignos (kappa=0). Por ello se descarta la idea. 
+
+También se han probado los modelos entrenados buscando eligiendo los parámetros que mayor precisión mediante, y por otro lado con mayor área bajo la curva ROC, los resultados son similares, algunos algoritmos se benefician del entrenamiento seleccionando precisión y otros del entrenamiento seleccionando las curvas ROC, pero el mejor algoritmo (random forest) mantiene la misma eficacia. He elegido usar el área bajo la curva porque mejora la precisión y más importante, la sensibilidad, de los árboles de decisión, que es un algoritmo fácilmente interpretable y puede ser útil, pero entrenando buscando la mayor precisión se obtienen buenos resultados también.
+
+
+```{r}
+set.seed(12345)
+Control <- trainControl(method = "repeatedcv", number = 10, repeats = 10, allowParallel = T, 
+                        summaryFunction = twoClassSummary,
+                        classProbs = TRUE)
+```
+
+## k-Nearest Neighbour
+
+```{r}
+time1=Sys.time()
+set.seed(12345)
+model_knn <- train(diagnosis ~ ., train, method='knn',
+                   trControl= Control,
+# a diferencia de los otros algoritmos, knn si se beneficia de la normalización
+                   preProc = c("center", "scale"), 
+# pruebo 10 condiciones diferentes, el programa elige la mejor.
+                   tuneGrid= NULL, tuneLength=params$ntuning,
+                   metric = "ROC") 
+                  
+
+prediction <- predict(model_knn, test[,-31])
+res <- table(prediction, test$diagnosis)
+cmatrix <- confusionMatrix(res,positive="M")
+
+time2=Sys.time()
+
+resumen_knn <- data.frame(precisión =  cmatrix$overall[1],
+                          kappa = cmatrix$overall[2],
+                          sensibilidad =  cmatrix$byClass[1],
+                          especificidad = cmatrix$byClass[2],
+                          tiempo = difftime(time2,time1, units = "mins"))
+rownames(resumen_knn) <- "k-NN"
+kable(resumen_knn)
+```
+## Naive Bayes
+
+```{r}
+cl <- makePSOCKcluster(4)
+registerDoParallel(cl)
+
+time1=Sys.time()
+set.seed(12345)
+model_naive_bayes <- train(diagnosis ~ ., train, method='naive_bayes',
+                   trControl= Control,
+                   tuneGrid= NULL, tuneLength=params$ntuning,trace = FALSE,
+                   metric = "ROC") 
+
+prediction <- predict(model_naive_bayes, test[,-31])
+res <- table(prediction, test$diagnosis)
+cmatrix <- confusionMatrix(res,positive="M")
+
+time2=Sys.time()
+
+resumen_naive_bayes <- data.frame(precisión =  cmatrix$overall[1],
+                                kappa = cmatrix$overall[2],
+                                sensibilidad =  cmatrix$byClass[1],
+                                especificidad = cmatrix$byClass[2],
+                                tiempo = difftime(time2,time1, units = "mins"))
+rownames(resumen_naive_bayes) <- "Naive Bayes"
+kable(resumen_naive_bayes)
+
+stopCluster(cl)
+```
+
+## Artificial Neural Network
+
+```{r}
+cl <- makePSOCKcluster(4)
+registerDoParallel(cl)
+
+time1=Sys.time()
+set.seed(12345)
+model_nnet <- train(diagnosis ~ ., train, method='nnet',
+                   trControl= Control,
+                   tuneGrid= NULL, tuneLength=params$ntuning,trace = FALSE,
+                   metric = "ROC")
+
+prediction <- predict(model_nnet, test[,-31])
+res <- table(prediction, test$diagnosis)
+cmatrix <- confusionMatrix(res,positive="M")
+
+time2=Sys.time()
+
+resumen_nnet <- data.frame(precisión =  cmatrix$overall[1],
+                                kappa = cmatrix$overall[2],
+                                sensibilidad =  cmatrix$byClass[1],
+                                especificidad = cmatrix$byClass[2],
+                                tiempo = difftime(time2,time1, units = "mins"))
+rownames(resumen_nnet) <- "Neural network"
+kable(resumen_nnet)
+
+stopCluster(cl)
+```
+
+## Support Vector Machine
+
+### SVM lineal
+
+```{r}
+cl <- makePSOCKcluster(4)
+registerDoParallel(cl)
+
+time1=Sys.time()
+set.seed(12345)
+model_svm_lineal <- train(diagnosis ~ ., train, method='svmLinear', 
+                   trControl= Control, 
+                   tuneGrid= NULL, tuneLength=params$ntuning,trace = FALSE,
+                   metric = "ROC")
+
+prediction <- predict(model_svm_lineal, test[,-31])
+res <- table(prediction, test$diagnosis)
+cmatrix <- confusionMatrix(res,positive="M")
+
+time2=Sys.time()
+
+resumen_svm_lineal <- data.frame(precisión =  cmatrix$overall[1],
+                                kappa = cmatrix$overall[2],
+                                sensibilidad =  cmatrix$byClass[1],
+                                especificidad = cmatrix$byClass[2],
+                                tiempo = difftime(time2,time1, units = "mins"))
+rownames(resumen_svm_lineal) <- "SVM lineal"
+kable(resumen_svm_lineal)
+
+stopCluster(cl)
+```
+
+### SVM radial (RBF)
+
+```{r}
+cl <- makePSOCKcluster(4)
+registerDoParallel(cl)
+
+time1=Sys.time()
+set.seed(12345)
+model_svm_RBF <- train(diagnosis ~ ., train, method='svmRadial', 
+                   trControl= Control, 
+                   tuneGrid= NULL, tuneLength=params$ntuning,trace = FALSE,
+                   metric = "ROC") 
+
+prediction <- predict(model_svm_RBF, test[,-31])
+res <- table(prediction, test$diagnosis)
+cmatrix <- confusionMatrix(res,positive="M")
+
+time2=Sys.time()
+
+resumen_svm_RBF <- data.frame(precisión =  cmatrix$overall[1],
+                                kappa = cmatrix$overall[2],
+                                sensibilidad =  cmatrix$byClass[1],
+                                especificidad = cmatrix$byClass[2],
+                                tiempo = difftime(time2,time1, units = "mins"))
+rownames(resumen_svm_RBF) <- "SVM RBF"
+kable(resumen_svm_RBF)
+
+stopCluster(cl)
+```
+
+## Árbol de decisión 
+
+```{r}
+cl <- makePSOCKcluster(4)
+registerDoParallel(cl)
+
+time1=Sys.time()
+set.seed(12345)
+model_C5.0 <- train(diagnosis ~ ., train, method='C5.0', 
+                   trControl= Control, 
+                   tuneGrid= NULL, tuneLength=params$ntuning,trace = FALSE,
+                   metric = "ROC")
+
+prediction <- predict(model_C5.0, test[,-31])
+res <- table(prediction, test$diagnosis)
+cmatrix <- confusionMatrix(res,positive="M")
+
+time2=Sys.time()
+time2-time1
+
+resumen_c5 <- data.frame(precisión =  cmatrix$overall[1],
+                                kappa = cmatrix$overall[2],
+                                sensibilidad =  cmatrix$byClass[1],
+                                especificidad = cmatrix$byClass[2],
+                                tiempo = difftime(time2,time1, units = "mins"))
+rownames(resumen_c5) <- "Decisión Trees"
+kable(resumen_c5)
+
+stopCluster(cl)
+```
+
+## Random Forest
+
+```{r}
+cl <- makePSOCKcluster(4)
+registerDoParallel(cl)
+
+time1=Sys.time()
+set.seed(12345)
+model_RF <- train(diagnosis ~ ., train, method='rf', 
+                   trControl= Control, 
+                   tuneGrid= NULL, tuneLength=params$ntuning,trace = FALSE,
+                   metric = "ROC") 
+
+prediction <- predict(model_RF, test[,-31])
+res <- table(prediction, test$diagnosis)
+cmatrix <- confusionMatrix(res,positive="M")
+
+time2=Sys.time()
+
+resumen_rf <- data.frame(precisión =  cmatrix$overall[1],
+                                kappa = cmatrix$overall[2],
+                                sensibilidad =  cmatrix$byClass[1],
+                                especificidad = cmatrix$byClass[2],
+                                tiempo = difftime(time2,time1, units = "mins"))
+rownames(resumen_rf) <- "Random Forest"
+kable(resumen_rf)
+
+beep(3)
+stopCluster(cl)
+```
+
+# Conclusión
+
+```{r}
+resumen_algoritmos <- rbind.data.frame(resumen_knn, resumen_naive_bayes, resumen_nnet, resumen_svm_lineal,  resumen_svm_RBF, resumen_c5, resumen_rf)
+kable(resumen_algoritmos)
+
+write.csv(resumen_algoritmos, "resultados/precisión entrenando según ROC.csv")
+```
+
+El mejor algoritmo para clasificar los tumores es el método random forest, es un algoritmo difícil de interpretar, pero eficaz. El algoritmo de toma de decisiones es un poco menos preciso, pero mantiene la sensibilidad, por lo que podría usarse para hacer una guía que permitiera a los médicos que analizan las células al microscopio hacerse una idea de la gravedad del tumor; personalmente no lo recomiendo, porque la toma de datos implica hacer una biopsia del tejido mamario, por tanto, ya se sospecha que puede ser maligno, la guía podría ser útil en otras circunstancias, pero no en esta. Además, una vez tomadas las muestras el random forest podría clasificarlas en menos de dos minutos, seguramente menos de lo que tardaría el médico en seguir la clave dicotómica, y más preciso. 
+
+Por todo esto, y a modo de conclusión, para esta tarea se recomiendo el algoritmo random forest, porque, aunque no podamos seguir fácilmente el proceso por el que toma las decisiones, es el que menores fallos comete prediciendo datos con los que no ha entrenado.
