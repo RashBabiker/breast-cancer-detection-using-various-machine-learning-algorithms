@@ -11,9 +11,11 @@ params:
   ntuning: 10
 ---
 
-# Repositorio Github [COMPLETA]
+\newpage
 
-Se han probado los algoritmos en distintas condiciones que no se muestran en el informe por agilizar la lectura y la reproducción del código. A lo largo del informe se hace referencia a estos resultados para justificar las decisiones tomadas, se pueden consultar en el siguiente repositorio de github: [METER ENLACE].
+# Repositorio Github 
+
+Se han probado los algoritmos en distintas condiciones que no se muestran en el informe por agilizar la lectura y la reproducción del código. A lo largo del informe se hace referencia a estos resultados para justificar las decisiones tomadas, se pueden consultar en el siguiente repositorio de github: https://github.com/RashBabiker/PEC3_ML
 
 # Librerías usadas
 
@@ -23,8 +25,6 @@ options(scipen=999)
 library(tidyverse); library(caret); library(ggfortify); library(doParallel); library(beepr);
 library(vegan); library(party); library(knitr)
 ```
-
-\newpage
 
 # Análisis descriptivo de los datos y control de calidad
 
@@ -40,6 +40,8 @@ sum(is.na(data))
 kable(table(data$diagnosis))
 ```
 
+\newpage
+
 La siguiente tabla muestra el rango de valores de cada variable, así como su media y su mediana:
 
 ```{r}
@@ -49,16 +51,16 @@ colnames(m4) <- c("minimo", "maximo", "media", "mediana")
 kable(round(m4,3))
 ```
 
+\newpage
+
 La media y la mediana coinciden en la mayoría de las variables, lo que sugiere que siguen una distribución normal y que no tienen outliers, a excepción de las dos variables con mayor varianza y media:
 
 ```{r}
 par(mfrow=c(1,2))
-plot(m4$minimo, m4$maximo)
-plot(m4$media, m4$mediana)
+plot(m4$minimo, m4$maximo, main = "Rango")
+plot(m4$media, m4$mediana, main = "Media y mediana")
 abline(a=0,b=1)
 ```
-
-\newpage 
 
 Las variables con mayor media y mediana son `r as.name(rownames(m4 %>% arrange(-media))[1])` y `r as.name(rownames(m4 %>% arrange(-media))[2])`, podrían contener outliers, a continuación se representa su distribución para localizarlos, los círculos muestran valores que superan 3 veces el rango intercuartílico:
 
@@ -81,19 +83,17 @@ outliers <- data %>% filter(area_mean>3*IQR_mean & area_worst>3*IQR_worst)
 kable(table(outliers$diagnosis))
 ```
 
-La tabla sin outliers se queda con `r nrow(data_fil)` muestras de las `r nrow(data)` totales. Todos los outliers corresponden a tumores malignos, es decir, un área excesivamente grande es indicador de cáncer. Se han probado todos los algoritmos sin estos outliers y en general la precisión disminuye, por lo que se mantienen todos los datos. Los datos in outliers están en el repositorio de github: [ENLACE].
-
-<!-- Hasta aqui revisado hasta ortografía, faltan los enlaces a github -->
+La tabla sin outliers se queda con `r nrow(data_fil)` muestras de las `r nrow(data)` totales. Todos los outliers corresponden a tumores malignos, es decir, un área excesivamente grande es indicador de cáncer. Se han probado todos los algoritmos sin estos outliers y en general la precisión disminuye, por lo que se mantienen todos los datos. Los datos in outliers están en el repositorio de github: https://github.com/RashBabiker/PEC3_ML/blob/master/resultados/precisi%C3%B3n%20datos%20no%20outliers.csv
 
 ## Normalización
 
-Los datos tienen distintos rangos, como en principio no hay un parámetro más importante que otro, puede ser recomendable normalizar los datos para usarlos con ciertos algoritmos. La normalización solo ha mostrado ser eficaz con el algoritmo knn, por lo que solo se usa con ese método. Los resultados usando datos normalizados están en github [ENLACE].
+Los datos tienen distintos rangos, como en principio no hay un parámetro más importante que otro, puede ser recomendable normalizar los datos para usarlos con ciertos algoritmos. La normalización solo ha mostrado ser eficaz con el algoritmo knn, por lo que solo se usa con ese método. Los resultados usando datos normalizados están en github: https://github.com/RashBabiker/PEC3_ML/blob/master/resultados/precisi%C3%B3n%20datos%20normalizados.csv
 
 ## Comparación entre tumores
 
 Para que se puedan clasificar correctamente, las muestras deben ser diferentes, esto se confirma mediante PCA y PERMANOVA. El PCA muestra claras diferencias entre los grupos en general, aunque hay ciertos puntos donde las diferencias no están claras. El PERMANOVA muestra diferencias significativas entre los dos diagnósticos.
 
-```{r}
+```{r warning=F}
 PCA <- prcomp(data[,1:30], center = F,scale. = F)
 
 autoplot(PCA, data = data, colour = "diagnosis")
@@ -122,10 +122,15 @@ c(nrow(train), nrow(test))
 
 Para entrenar y optimizar los mejores parámetros se usará el 10-fold-cross-validation. 
 
-Como los falsos negativos son mucho más peligrosos que los falsos positivos, se ha probado a entrenar y elegir los modelos con mayor sensibilidad en el cross validation, los resultados están en la carpeta resultados del repositorio de github [ENLACE]. Sorprendentemente al enfrentar estos modelos al test dataset, que no habían visto, no se ve una mejora respecto a los modelos entrenados basados en la precisión, incluso el modelo de neural network empeora todo lo posible, valorando todos los tumores como benignos (kappa=0). Por ello se descarta la idea. 
+Como los falsos negativos son mucho más peligrosos que los falsos positivos, se ha probado a entrenar y elegir los modelos con mayor sensibilidad en el cross validation, los resultados están en la carpeta resultados del repositorio de github. Sorprendentemente al enfrentar estos modelos al test dataset, que no habían visto, no se ve una mejora respecto a los modelos entrenados basados en la precisión, incluso el modelo de neural network empeora todo lo posible, valorando todos los tumores como benignos (kappa=0). Por ello se descarta la idea. 
 
-También se han probado los modelos entrenados buscando eligiendo los parámetros que mayor precisión mediante, y por otro lado con mayor área bajo la curva ROC, los resultados son similares, algunos algoritmos se benefician del entrenamiento seleccionando precisión y otros del entrenamiento seleccionando las curvas ROC, pero el mejor algoritmo (random forest) mantiene la misma eficacia. He elegido usar el área bajo la curva porque mejora la precisión y más importante, la sensibilidad, de los árboles de decisión, que es un algoritmo fácilmente interpretable y puede ser útil, pero entrenando buscando la mayor precisión se obtienen buenos resultados también.
+También se han probado los modelos entrenados eligiendo los parámetros que mayor precisión mediante, y por otro lado con mayor área bajo la curva ROC (AUC), los resultados son similares, algunos algoritmos se benefician del entrenamiento seleccionando precisión y otros del entrenamiento seleccionando el mejor AUC, pero el mejor algoritmo (random forest) mantiene la misma eficacia. Se ha elegido usar el área bajo la curva porque mejora la precisión y, más importante, la sensibilidad de los árboles de decisión, que es un algoritmo fácilmente interpretable y puede ser útil; pero entrenando buscando la mayor precisión se obtienen buenos resultados también.
 
+* Resultados entrenando sensibilidad: https://github.com/RashBabiker/PEC3_ML/blob/master/resultados/precisi%C3%B3n%20entrenando%20con%20sensibilidad.csv
+
+* Resultados entrenando precisión: https://github.com/RashBabiker/PEC3_ML/blob/master/resultados/precisi%C3%B3n%20entrenando%20seg%C3%BAn%20precisi%C3%B3n.csv
+
+* Los resultados entrenando el area bajo la curva ROC se encuentran en la conclusión de este informe y en este enlace: https://github.com/RashBabiker/PEC3_ML/blob/master/resultados/precisi%C3%B3n%20entrenando%20seg%C3%BAn%20ROC.csv
 
 ```{r}
 set.seed(12345)
@@ -162,6 +167,9 @@ resumen_knn <- data.frame(precisión =  cmatrix$overall[1],
 rownames(resumen_knn) <- "k-NN"
 kable(resumen_knn)
 ```
+
+\newpage
+
 ## Naive Bayes
 
 ```{r}
@@ -192,6 +200,8 @@ kable(resumen_naive_bayes)
 stopCluster(cl)
 ```
 
+\newpage
+
 ## Artificial Neural Network
 
 ```{r}
@@ -221,6 +231,8 @@ kable(resumen_nnet)
 
 stopCluster(cl)
 ```
+
+\newpage
 
 ## Support Vector Machine
 
@@ -254,6 +266,8 @@ kable(resumen_svm_lineal)
 stopCluster(cl)
 ```
 
+\newpage
+
 ### SVM radial (RBF)
 
 ```{r}
@@ -283,6 +297,8 @@ kable(resumen_svm_RBF)
 
 stopCluster(cl)
 ```
+
+\newpage
 
 ## Árbol de decisión 
 
@@ -315,6 +331,8 @@ kable(resumen_c5)
 stopCluster(cl)
 ```
 
+\newpage
+
 ## Random Forest
 
 ```{r}
@@ -346,10 +364,13 @@ beep(3)
 stopCluster(cl)
 ```
 
+\newpage
+
 # Conclusión
 
 ```{r}
-resumen_algoritmos <- rbind.data.frame(resumen_knn, resumen_naive_bayes, resumen_nnet, resumen_svm_lineal,  resumen_svm_RBF, resumen_c5, resumen_rf)
+resumen_algoritmos <- rbind.data.frame(resumen_knn, resumen_naive_bayes, resumen_nnet,
+                                       resumen_svm_lineal,  resumen_svm_RBF, resumen_c5, resumen_rf)
 kable(resumen_algoritmos)
 
 write.csv(resumen_algoritmos, "resultados/precisión entrenando según ROC.csv")
